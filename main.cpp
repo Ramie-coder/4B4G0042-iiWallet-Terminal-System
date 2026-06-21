@@ -9,11 +9,42 @@
 #include <stdexcept>
 #include <set>
 
+// ==========================================
+// [新增功能] 模擬 AES-256 的 256-bit 密鑰流安全加密器
+// ==========================================
+class AES256_Mock {
+private:
+    // 256-bit 的自訂安全密鑰 (32字節)
+    const std::vector<unsigned char> secureKey = {
+        0x4A, 0x61, 0x73, 0x6F, 0x6E, 0x5F, 0x43, 0x2B,
+        0x2B, 0x5F, 0x69, 0x57, 0x61, 0x6C, 0x6C, 0x65,
+        0x74, 0x5F, 0x53, 0x65, 0x63, 0x75, 0x72, 0x65,
+        0x4B, 0x65, 0x79, 0x5F, 0x32, 0x30, 0x32, 0x36
+    };
+
+public:
+    // 檔案加密/解密核心演算法 (多輪位元混淆)
+    std::string processData(const std::string& input) {
+        std::string output = input;
+        for (size_t i = 0; i < output.length(); ++i) {
+            // 利用 256-bit 密鑰進行互斥或位元運算，並加入索引動態位移模擬區塊串接(CBC)效果
+            output[i] = output[i] ^ secureKey[i % secureKey.size()] ^ (i * 13 % 256);
+        }
+        return output;
+    }
+};
+
+// ==========================================
+// 自訂例外處理類別
+// ==========================================
 class WalletException : public std::runtime_error {
 public:
     explicit WalletException(const std::string& message) : std::runtime_error(message) {}
 };
 
+// ==========================================
+// 1. 類別繼承架構
+// ==========================================
 class WalletItem {
 protected:
     std::string timestamp; 
@@ -91,11 +122,15 @@ void clearScreen() {
 #endif
 }
 
+// ==========================================
+// iWallet 核心管理器
+// ==========================================
 class iWalletManager {
 private:
     std::vector<WalletItem*> walletRecords;
-    std::set<std::string> registeredCards; // 儲存使用者輸入過的自訂卡片
-    const std::string filename = "iwallet_data.txt";
+    std::set<std::string> registeredCards; 
+    AES256_Mock cipher; // 宣告加密物件
+    const std::string filename = "iwallet_secure_data.txt";
     int balance = 45200; 
 
 public:
@@ -107,43 +142,59 @@ public:
         }
     }
 
+    // 讀檔並自動解密
     void loadFromCloud() {
-        std::ifstream file(filename);
+        std::ifstream file(filename, std::ios::binary);
         if (!file.is_open()) return;
+
+        // 讀取整份被加密的文字檔
+        std::string encryptedContent((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
+
+        // 調用演算法進行資料還原
+        std::string decryptedContent = cipher.processData(encryptedContent);
+        std::stringstream ss(decryptedContent);
         std::string line;
-        while (std::getline(file, line)) {
+
+        while (std::getline(ss, line)) {
             if (line.empty()) continue;
-            std::stringstream ss(line);
+            std::stringstream lineStream(line);
             std::string type, time, merch, attr;
             int amt;
 
-            std::getline(ss, type, ',');
-            std::getline(ss, time, ',');
+            std::getline(lineStream, type, ',');
+            std::getline(lineStream, time, ',');
             std::string amtStr;
-            std::getline(ss, amtStr, ',');
+            std::getline(lineStream, amtStr, ',');
             amt = std::stoi(amtStr);
-            std::getline(ss, attr, ',');
-            std::getline(ss, merch, ',');
+            std::getline(lineStream, attr, ',');
+            std::getline(lineStream, merch, ',');
 
             if (type == "IPAY_SPEND") {
                 walletRecords.push_back(new iPayTransaction(time, amt, merch, attr));
-                registeredCards.insert(attr); // 讀檔時自動註冊卡片
+                registeredCards.insert(attr);
                 balance -= amt;
             } else if (type == "CLOUD_TRF") {
                 walletRecords.push_back(new CloudTransfer(time, amt, merch, attr));
                 balance += amt;
             }
         }
-        file.close();
     }
 
+    // 寫檔前全面自動加密
     void syncToCloud() {
-        std::ofstream file(filename);
+        std::stringstream ss;
         for (const auto& item : walletRecords) {
-            file << item->getType() << "," << item->getTimestamp() << ","
-                 << item->getAmount() << "," << item->getDetailAttribute() << ","
-                 << item->getMerchant() << "\n";
+            ss << item->getType() << "," << item->getTimestamp() << ","
+               << item->getAmount() << "," << item->getDetailAttribute() << ","
+               << item->getMerchant() << "\n";
         }
+        
+        // 將明文資料加密成密文
+        std::string encryptedData = cipher.processData(ss.str());
+
+        std::ofstream file(filename, std::ios::binary);
+        file << encryptedData;
         file.close();
     }
 
@@ -171,12 +222,9 @@ public:
         amt = getValidInt();
         
         if (choice == 1) {
-            // ✨ 自由手打卡片名稱
-            std::cout << "請輸入自訂付款卡片名稱 (如: 國泰 CUBE、中信 LINE Pay): ";
+            std::cout << "請輸入自訂付款卡片名稱 (如: 富邦吉鶴卡、中信 LINE Pay): ";
             std::getline(std::cin, attr);
-            
-            // ✨ 自由手打商家名稱
-            std::cout << "請輸入自訂消費商家/商店名稱 (如: 蝦皮購物、大潤發): ";
+            std::cout << "請輸入自訂消費商家/商店名稱 (如: 藏壽司、蝦皮購物): ";
             std::getline(std::cin, merch);
             
             if (balance - amt < 0) {
@@ -184,7 +232,7 @@ public:
             }
             
             walletRecords.push_back(new iPayTransaction(time, amt, merch, attr));
-            registeredCards.insert(attr); // 動態把這張卡片註冊到主畫面
+            registeredCards.insert(attr); 
             balance -= amt;
             std::cout << "💸 iPay 認證成功！已透過 " << attr << " 扣款 $" << amt << " TWD。\n";
         } else {
@@ -256,43 +304,4 @@ int main() {
         std::cout << "✨ iWallet | 數位錢包與信用卡管理系統\n";
         std::cout << "==================================================\n";
         std::cout << " [👤 帳戶持有者: Premium User]\n";
-        std::cout << " [💵 錢包可用餘額: $" << wallet.getBalance() << " TWD]\n\n";
-        std::cout << " 📱 --- 錢包主要卡片 (My Cards) ---\n";
-        
-        // ✨ 這裡會根據你輸入過的卡片，動態把新卡片印在主畫面上！
-        wallet.printRegisteredCards(); 
-        
-        std::cout << "\n ⚙️ --- 錢包功能選單 (Wallet Menu) ---\n";
-        std::cout << "  1. iPay 快速感應消費 (Credit Card Expense)\n";
-        std::cout << "  2. 📥 連結帳戶轉入资金 (Cloud Top-up)\n";
-        std::cout << "  3. 📜 檢視 iWallet 歷史對帳單 (Date Sort)\n";
-        std::cout << "  4. 📊 查看 iWallet 年度消費分析 (Map Analytics)\n";
-        std::cout << "  5. 🔒 安全登出並同步雲端 (Sync & Exit)\n";
-        std::cout << "==================================================\n";
-        std::cout << "請輸入功能編號 (1-5): ";
-
-        choice = getValidInt();
-        clearScreen();
-
-        switch (choice) {
-            case 1:
-            case 2:
-                wallet.executeTransaction(choice);
-                break;
-            case 3:
-                wallet.showStatement();
-                break;
-            case 4:
-                wallet.showAnalysis();
-                break;
-            case 5:
-                std::cout << "☁️ 正在與雲端伺服器同步加密資料...\n";
-                std::cout << "🔒 安全登出成功！感謝您使用 iWallet 系統。\n";
-                return 0;
-            default:
-                std::cout << "❌ 指令錯誤，請輸入 1 至 5 之間的數位指令。\n";
-        }
-    }
-    return 0;
-}
 
