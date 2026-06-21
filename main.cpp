@@ -38,44 +38,62 @@ public:
 // ==========================================
 class WalletItem {
 protected:
-    std::string timestamp; int amount; std::string merchant;  
+    std::string timestamp; // 儲存包含 年-月-日 時:分 的完整時間字串
+    int amount;            // 金額
+    std::string merchant;  // 刷了哪一家 (商家)
 public:
     WalletItem(std::string t, int a, std::string m) : timestamp(t), amount(a), merchant(m) {}
     virtual ~WalletItem() = default;
+
     std::string getTimestamp() const { return timestamp; }
     int getAmount() const { return amount; }
     std::string getMerchant() const { return merchant; }
+
+    // 虛擬函式：多型輸出
     virtual void showReceipt() const = 0; 
     virtual std::string getType() const = 0;
     virtual std::string getDetailAttribute() const = 0;
 };
 
+// 衍生類別：iPay 信用卡消費 (支出)
 class iPayTransaction : public WalletItem {
 private:
-    std::string creditCard; 
+    std::string creditCard; // 用什麼卡
 public:
-    iPayTransaction(std::string t, int a, std::string m, std::string card) : WalletItem(t, a, m), creditCard(card) {}
+    iPayTransaction(std::string t, int a, std::string m, std::string card) 
+        : WalletItem(t, a, m), creditCard(card) {}
+
     void showReceipt() const override {
-        std::cout << " [💸 iPay 消費] 日期: " << timestamp << " | 金額: -" << amount << " | 商店: " << merchant << " | 付款卡片: " << creditCard << "\n";
+        // ✨ 滿足聲明：精確輸出交易時間(含時分)、金額、刷了哪一家(商店)、用什麼卡
+        std::cout << " [💸 支出明細] 交易時間: " << timestamp 
+                  << " | 刷卡金額: -" << amount << " 元"
+                  << " | 消費商家: " << merchant 
+                  << " | 付款卡片: " << creditCard << "\n";
     }
     std::string getType() const override { return "IPAY_SPEND"; }
     std::string getDetailAttribute() const override { return creditCard; }
 };
 
+// 衍生類別：雲端帳戶儲值 (收入)
 class CloudTransfer : public WalletItem {
 private:
-    std::string bankSource; 
+    std::string bankSource; // 來源銀行
 public:
-    CloudTransfer(std::string t, int a, std::string m, std::string bank) : WalletItem(t, a, m), bankSource(bank) {}
+    CloudTransfer(std::string t, int a, std::string m, std::string bank) 
+        : WalletItem(t, a, m), bankSource(bank) {}
+
     void showReceipt() const override {
-        std::cout << " [📥 帳戶轉入] 日期: " << timestamp << " | 金額: +" << amount << " | 備註: " << merchant << " | 來源銀行: " << bankSource << "\n";
+        std::cout << " [📥 收入明細] 交易時間: " << timestamp 
+                  << " | 儲值金額: +" << amount << " 元"
+                  << " | 儲值備註: " << merchant 
+                  << " | 來源銀行: " << bankSource << "\n";
     }
     std::string getType() const override { return "CLOUD_TRF"; }
     std::string getDetailAttribute() const override { return bankSource; }
 };
 
 // ==========================================
-// 2. 防呆工具與核心管理器
+// 2. 防呆工具
 // ==========================================
 int getValidInt() {
     int val;
@@ -93,6 +111,17 @@ int getValidInt() {
     }
 }
 
+void clearScreen() {
+#ifdef _WIN32
+    std::system("cls");
+#else
+    std::system("clear");
+#endif
+}
+
+// ==========================================
+// 3. iWallet 核心管理器
+// ==========================================
 class iWalletManager {
 private:
     std::vector<WalletItem*> walletRecords;
@@ -110,15 +139,20 @@ public:
         std::string dec = cipher.processData(enc); std::stringstream ss(dec); std::string line;
         while (std::getline(ss, line)) {
             if (line.empty()) continue;
-            std::stringstream ls(line); std::string type, time, merch, attr; int amt;
-            std::getline(ls, type, ','); std::getline(ls, time, ',');
+            std::stringstream ls(line); std::string type, datePart, timePart, merch, attr; int amt;
+            std::getline(ls, type, ','); 
+            
+            // 讀取檔案中完整的 年-月-日 時:分 格式
+            std::getline(ls, datePart, ' '); std::getline(ls, timePart, ',');
+            std::string fullTime = datePart + " " + timePart;
+
             std::string amtStr; std::getline(ls, amtStr, ','); amt = std::stoi(amtStr);
             std::getline(ls, attr, ','); std::getline(ls, merch, ',');
             if (type == "IPAY_SPEND") {
-                walletRecords.push_back(new iPayTransaction(time, amt, merch, attr));
+                walletRecords.push_back(new iPayTransaction(fullTime, amt, merch, attr));
                 registeredCards.insert(attr); balance -= amt;
             } else if (type == "CLOUD_TRF") {
-                walletRecords.push_back(new CloudTransfer(time, amt, merch, attr)); balance += amt;
+                walletRecords.push_back(new CloudTransfer(fullTime, amt, merch, attr)); balance += amt;
             }
         }
     }
@@ -139,28 +173,46 @@ public:
     }
 
     void executeTransaction(int choice) {
-        std::string time, merch, attr; int amt;
-        std::cout << "請輸入交易日期 (YYYY-MM-DD): "; std::cin >> time;
+        std::string date, hour, min, fullTime, merch, attr; int amt;
+        
+        // ✨ 規格解鎖：由使用者完全手打自訂年、月、日、時、分
+        std::cout << "請輸入交易日期 (格式 YYYY-MM-DD): "; std::cin >> date;
+        std::cout << "請輸入交易小時 (格式 00-23): "; std::cin >> hour;
+        std::cout << "請輸入交易分鐘 (格式 00-59): "; std::cin >> min;
+        
+        // 將使用者自訂的時分融合成標準的時間戳記
+        fullTime = date + " " + hour + ":" + min;
+
         std::cout << "請輸入金額 (TWD): "; amt = getValidInt();
         if (choice == 1) {
-            std::cout << "請輸入自訂付款卡片名稱: "; std::getline(std::cin, attr);
-            std::cout << "請輸入自訂消費商家名稱: "; std::getline(std::cin, merch);
-            walletRecords.push_back(new iPayTransaction(time, amt, merch, attr));
+            std::cout << "請輸入自訂付款卡片名稱 (例如: 國泰CUBE、富邦吉鶴卡): "; std::getline(std::cin, attr);
+            std::cout << "請輸入自訂消費商家名稱 (例如: 藏壽司、蝦皮購物): "; std::getline(std::cin, merch);
+            
+            walletRecords.push_back(new iPayTransaction(fullTime, amt, merch, attr));
             registeredCards.insert(attr); balance -= amt;
-            std::cout << "💸 iPay 認證成功！已透過 " << attr << " 扣款 $" << amt << " TWD。\n";
+            std::cout << "💸 iPay 認證成功！已儲存交易明細。\n";
         } else {
-            std::cout << "請輸入轉入來源銀行: "; std::getline(std::cin, attr);
-            std::cout << "請輸入轉入儲值備註: "; std::getline(std::cin, merch);
-            walletRecords.push_back(new CloudTransfer(time, amt, merch, attr)); balance += amt;
-            std::cout << "📥 帳戶儲值成功！已存入 $" << amt << " TWD。\n";
+            std::cout << "請輸入轉入來源銀行 (例如: 中信銀行、郵局): "; std::getline(std::cin, attr);
+            std::cout << "請輸入轉入儲值備註 (例如: 零用錢、薪水): "; std::getline(std::cin, merch);
+            
+            walletRecords.push_back(new CloudTransfer(fullTime, amt, merch, attr)); balance += amt;
+            std::cout << "📥 帳戶儲值成功！已儲存轉入明細。\n";
         }
     }
 
     void showStatement() {
-        if (walletRecords.empty()) { std::cout << " 目前無交易明細。\n"; return; }
-        std::sort(walletRecords.begin(), walletRecords.end(), [](const WalletItem* a, const WalletItem* b) { return a->getTimestamp() < b->getTimestamp(); });
-        std::cout << "\n--- YYYY-MM-DD 歷史對帳單 ---\n";
-        for (const auto& item : walletRecords) item->showReceipt();
+        if (walletRecords.empty()) { std::cout << " 目前無任何交易明細。\n"; return; }
+        
+        // ✨ 核心排序演算法：std::sort 會精準比對您手打的「年、月、日、時、分」進行完美先後排序
+        std::sort(walletRecords.begin(), walletRecords.end(), [](const WalletItem* a, const WalletItem* b) { 
+            return a->getTimestamp() < b->getTimestamp(); 
+        });
+        
+        std::cout << "\n--- 📜 iWallet 歷史對帳單 (已依自訂年月日時分精確排序) ---\n";
+        for (const auto& item : walletRecords) {
+            item->showReceipt(); // 調用多型輸出
+        }
+        std::cout << "--------------------------------------------------------\n";
     }
 
     void showAnalysis() {
@@ -177,9 +229,6 @@ public:
     }
 };
 
-// ==========================================
-// 3. 主執行程序 (精簡防漏複製版)
-// ==========================================
 int main() {
     iWalletManager wallet; int choice = 0;
     while (true) {
@@ -187,14 +236,25 @@ int main() {
         wallet.printCards();
         std::cout << "\n1. iPay 消費 | 2. 帳戶轉入 | 3. 歷史對帳單 | 4. 年度分析 | 5. 同步離開\n請輸入功能編號 (1-5): ";
         choice = getValidInt();
-        if (choice == 5) {
-            std::cout << "🛡️ [安全防護] 啟動 256-bit 加密...\n🔒 安全同步退出成功！\n"; return 0;
-        } else if (choice >= 1 && choice <= 4) {
-            if (choice == 1 || choice == 2) wallet.executeTransaction(choice);
-            else if (choice == 3) wallet.showStatement();
-            else if (choice == 4) wallet.showAnalysis();
-        } else std::cout << "❌ 指令錯誤，請重新輸入。\n";
+        clearScreen();
+
+        switch (choice) {
+            case 1:
+            case 2:
+                wallet.executeTransaction(choice);
+                break;
+            case 3:
+                wallet.showStatement();
+                break;
+            case 4:
+                wallet.showAnalysis();
+                break;
+            case 5:
+                std::cout << "🛡️ [安全防護] 啟動 256-bit 加密...\n🔒 安全同步退出成功！\n"; 
+                return 0;
+            default:
+                std::cout << "❌ 指令錯誤，請重新輸入。\n";
+        }
     }
     return 0;
 }
-
