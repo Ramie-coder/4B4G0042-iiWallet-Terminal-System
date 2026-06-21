@@ -6,6 +6,15 @@
 #include <map>
 #include <algorithm>
 #include <sstream>
+#include <stdexcept>
+
+// ==========================================
+// [第 4 迭代新增] 自訂例外處理類別 (Custom Exception)
+// ==========================================
+class WalletException : public std::runtime_error {
+public:
+    explicit WalletException(const std::string& message) : std::runtime_error(message) {}
+};
 
 // ==========================================
 // 1. 類別繼承架構 (iWallet Domain)
@@ -61,17 +70,27 @@ public:
 };
 
 // ==========================================
-// 2. 防呆與畫面清理工具
+// 2. 防呆與畫面清理工具 (第 4 迭代優化：結合 Try-Catch)
 // ==========================================
 int getValidInt() {
     int val;
-    while (!(std::cin >> val) || val < 0) {
-        std::cout << "❌ 錯誤：請輸入有效的正整數金額: ";
-        std::cin.clear();
-        std::cin.ignore(1000, '\n');
+    while (true) {
+        try {
+            if (!(std::cin >> val)) {
+                std::cin.clear();
+                std::cin.ignore(1000, '\n');
+                throw WalletException("輸入非數字字元！");
+            }
+            if (val < 0) {
+                throw WalletException("金額不可為負數！");
+            }
+            std::cin.ignore(1000, '\n');
+            return val;
+        }
+        catch (const WalletException& e) {
+            std::cout << "❌ 安全防護攔截 -> 錯誤原因: " << e.what() << " 請重新輸入有效金額: ";
+        }
     }
-    std::cin.ignore(1000, '\n');
-    return val;
 }
 
 void clearScreen() {
@@ -89,7 +108,7 @@ class iWalletManager {
 private:
     std::vector<std::unique_ptr<WalletItem>> walletRecords;
     const std::string filename = "iwallet_data.txt";
-    int balance = 45200; // 初始模擬餘額
+    int balance = 45200; 
 
 public:
     iWalletManager() { loadFromCloud(); }
@@ -142,6 +161,12 @@ public:
 
         std::cout << "請輸入交易日期 (YYYY-MM-DD): ";
         std::cin >> time;
+        
+        // 第 4 迭代：日期格式基本防呆驗證
+        if (time.length() != 10 || time[4] != '-' || time[7] != '-') {
+            std::cout << "⚠️ 警告: 日期格式建議為 YYYY-MM-DD，系統已自動記錄。\n";
+        }
+
         std::cout << "請輸入金額 (TWD): ";
         amt = getValidInt();
         
@@ -151,6 +176,11 @@ public:
             attr = (attr == "2") ? "MasterCard (8888)" : "Visa (4321)";
             std::cout << "請輸入消費商店 (如: 麥當勞 / 星巴克): ";
             std::getline(std::cin, merch);
+            
+            // 第 4 迭代優化：若可用餘額不足，拋出例外提示（但不崩潰）
+            if (balance - amt < 0) {
+                std::cout << "⚠️ [iWallet 提醒] 當前餘額不足以支付此筆消費，錢包將出現負債餘額。\n";
+            }
             
             walletRecords.push_back(std::make_unique<iPayTransaction>(time, amt, merch, attr));
             balance -= amt;
@@ -173,7 +203,6 @@ public:
             return;
         }
 
-        // STL 應用：排序
         std::sort(walletRecords.begin(), walletRecords.end(), [](const auto& a, const auto& b) {
             return a->getTimestamp() < b->getTimestamp();
         });
@@ -190,7 +219,6 @@ public:
             return;
         }
 
-        // STL 應用：Map 統計
         std::map<std::string, int> cardStats;
         int totalSpend = 0;
 
@@ -209,7 +237,7 @@ public:
         std::cout << " [卡片消費佔比動態圖表]\n";
         for (const auto& pair : cardStats) {
             std::cout << " * " << pair.first << ": $" << pair.second << " ";
-            int bars = pair.second / 500; // 每500元畫一個方塊
+            int bars = pair.second / 500; 
             for(int i = 0; i < bars; ++i) std::cout << "■";
             std::cout << "\n";
         }
@@ -264,5 +292,3 @@ int main() {
                 std::cout << "❌ 指令錯誤，請輸入 1 至 5 之間的數位指令。\n";
         }
     }
-    return 0;
-}
